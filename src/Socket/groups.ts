@@ -10,8 +10,10 @@ import {
 	isLidUser,
 	isPnUser,
 	cacheLidToJid,
+	cacheGroupParticipantMappings,
 	jidEncode,
-	jidNormalizedUser
+	jidNormalizedUser,
+	lidToJid
 } from '../WABinary'
 import { makeChatsSocket } from './chats'
 
@@ -320,6 +322,21 @@ export const extractGroupMetadata = (result: BinaryNode) => {
 	const groupId = group.attrs.id!.includes('@') ? group.attrs.id : jidEncode(group.attrs.id!, 'g.us')
 	const eph = getBinaryNodeChild(group, 'ephemeral')?.attrs.expiration
 	const memberAddMode = getBinaryNodeChildString(group, 'member_add_mode') === 'all_member_add'
+	const participants: GroupParticipant[] = getBinaryNodeChildren(group, 'participant').map(({ attrs }) => {
+		const pnRaw = attrs.phone_number || attrs.jid
+		const pn = isLidUser(pnRaw) ? lidToJid(pnRaw) : pnRaw
+		const lidRaw = attrs.lid || attrs.jid
+		const lid = isLidUser(lidRaw) ? lidRaw : undefined
+		cacheLidToJid(lidRaw, pn)
+		return {
+			id: jidNormalizedUser(pn)!,
+			phoneNumber: jidNormalizedUser(pn)!,
+			lid,
+			admin: (attrs.type || null) as GroupParticipant['admin']
+		}
+	})
+	cacheGroupParticipantMappings(participants as any)
+
 	const metadata: GroupMetadata = {
 		id: groupId!,
 		notify: group.attrs.notify,
@@ -345,27 +362,8 @@ export const extractGroupMetadata = (result: BinaryNode) => {
 		isCommunityAnnounce: !!getBinaryNodeChild(group, 'default_sub_group'),
 		joinApprovalMode: !!getBinaryNodeChild(group, 'membership_approval_mode'),
 		memberAddMode,
-		participants: getBinaryNodeChildren(group, 'participant').map(({ attrs }) => {
-			const phoneNumber = isLidUser(attrs.jid) && isPnUser(attrs.phone_number) ? attrs.phone_number : undefined
-			const lid = isPnUser(attrs.jid) && isLidUser(attrs.lid) ? attrs.lid : undefined
+		participants,
 
-			// Cache LID <-> PN mappings for downstream resolution (best-effort)
-			// In addressing_mode=lid groups, attrs.jid is often the LID and attrs.phone_number is the PN JID
-			if (isLidUser(attrs.jid) && phoneNumber) {
-				cacheLidToJid(attrs.jid, phoneNumber)
-			}
-			// Sometimes attrs.jid is PN and attrs.lid is LID
-			if (isPnUser(attrs.jid) && lid) {
-				cacheLidToJid(lid, attrs.jid)
-			}
-
-			return {
-				id: attrs.jid!,
-				phoneNumber,
-				lid,
-				admin: (attrs.type || null) as GroupParticipant['admin']
-			}
-		}),
 		ephemeralDuration: eph ? +eph : undefined
 	}
 	return metadata
