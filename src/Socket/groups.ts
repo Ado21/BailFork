@@ -325,8 +325,9 @@ export const extractGroupMetadata = (result: BinaryNode) => {
 		const participants: GroupParticipant[] = getBinaryNodeChildren(group, 'participant').map(({ attrs }) => {
 			// attrs.* can be string | null | undefined depending on stanza.
 			// Normalise null -> undefined to satisfy TS + keep runtime behavior stable.
-			const pnRaw = (attrs.phone_number ?? attrs.jid ?? attrs.lid) as string | undefined
-			const lidRaw = (attrs.lid ?? attrs.jid) as string | undefined
+				// Use a final `?? undefined` to ensure `null` does not survive the coalescing chain.
+				const pnRaw = (attrs.phone_number ?? attrs.jid ?? attrs.lid ?? undefined) as string | undefined
+				const lidRaw = (attrs.lid ?? attrs.jid ?? undefined) as string | undefined
 			const pn = (isLidUser(pnRaw) ? lidToJid(pnRaw) : pnRaw) as string | undefined
 			const lid = isLidUser(lidRaw) ? lidRaw : undefined
 			cacheLidToJid(lidRaw, pn)
