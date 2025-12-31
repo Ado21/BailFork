@@ -1214,9 +1214,9 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 		 * WhatsApp can send both a primary jid (often @lid) and an alternate (often PN) via
 		 * participantAlt/remoteJidAlt. Bot code almost always expects PN JIDs.
 		 */
-		const preferPnJid = async (primary?: string, alt?: string) => {
-			const primaryStr = primary || ''
-			const altStr = alt || ''
+			const preferPnJid = async (primary?: string | null, alt?: string | null) => {
+				const primaryStr = primary ?? ''
+				const altStr = alt ?? ''
 
 			// If the alternate is already a PN jid, prefer it immediately (fast path)
 			if (altStr && altStr.endsWith('@s.whatsapp.net')) {
@@ -1236,7 +1236,7 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 				}
 			}
 
-			return primary
+				return primary || undefined
 		}
 
 		if (msg.key?.remoteJid && msg.key?.id && messageRetryManager) {
