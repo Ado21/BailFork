@@ -589,6 +589,24 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 		return { nodes, shouldIncludeDeviceIdentity }
 	}
 
+
+// Prefer PN JIDs (phone-number) over LID JIDs when possible
+const isLidUser = (jid?: string | null) =>
+	typeof jid === 'string' && (jid.endsWith('@lid') || jid.endsWith('@hosted.lid'))
+
+const resolvePnJid = async (jid?: string | null) => {
+	const primary = jid ? jidNormalizedUser(jid) : ''
+	if (!primary) return ''
+	if (!isLidUser(primary)) return primary
+	try {
+		const pn = await signalRepository.lidMapping.getPNForLID(primary)
+		return pn ? jidNormalizedUser(pn) : primary
+	} catch {
+		return primary
+	}
+}
+
+
 	const relayMessage = async (
 		jid: string,
 		message: proto.IMessage,
@@ -607,6 +625,15 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 		const isRetryResend = Boolean(participant?.jid)
 		let shouldIncludeDeviceIdentity = isRetryResend
 		const statusJid = 'status@broadcast'
+
+		// Normalize destination & participant to PN JIDs when possible (avoid @lid)
+		jid = (await resolvePnJid(jid)) || jid
+		if (participant?.jid) {
+			participant = { ...participant, jid: (await resolvePnJid(participant.jid)) || participant.jid }
+		}
+		if (statusJidList?.length) {
+			statusJidList = await Promise.all(statusJidList.map(async j => (await resolvePnJid(j)) || j))
+		}
 
 		const { user, server } = jidDecode(jid)!
 		const isGroup = server === 'g.us'
@@ -1148,6 +1175,8 @@ export const makeMessagesSocket = (config: SocketConfig) => {
 			return message
 		},
 		sendMessage: async (jid: string, content: AnyMessageContent, options: MiscMessageGenerationOptions = {}) => {
+			// Normalize destination to PN JID when possible (avoid @lid)
+			jid = (await resolvePnJid(jid)) || jid
 			const userJid = authState.creds.me!.id
 			if (
 				typeof content === 'object' &&
