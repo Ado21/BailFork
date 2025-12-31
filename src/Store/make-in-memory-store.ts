@@ -156,7 +156,10 @@ export default function makeInMemoryStore(config: InMemoryStoreConfig = {}) {
 					} else if (update.imgUrl === 'removed') {
 						delete contact.imgUrl
 					}
-					Object.assign(contacts[contact.id], contact)
+					// contacts is an object map; the slot may not yet exist even if we resolved `contact`.
+					// Ensure we always assign into a concrete object to satisfy TS + avoid runtime errors.
+					const target = (contacts[contact.id] ??= ({ id: contact.id } as any))
+					Object.assign(target, contact)
 				} else {
 					logger.debug({ update }, 'got update for non-existant contact')
 				}
