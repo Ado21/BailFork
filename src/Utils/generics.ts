@@ -481,7 +481,7 @@ export function bytesToCrockford(buffer: Buffer): string {
 		crockford.push(CROCKFORD_CHARACTERS.charAt((value << (5 - bitCount)) & 31))
 	}
 
-	return crockford.join('')
+	return crockford.join('') //z
 }
 
 export function encodeNewsletterMessage(message: proto.IMessage): Uint8Array {
