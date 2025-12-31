@@ -322,19 +322,38 @@ export const extractGroupMetadata = (result: BinaryNode) => {
 	const groupId = group.attrs.id!.includes('@') ? group.attrs.id : jidEncode(group.attrs.id!, 'g.us')
 	const eph = getBinaryNodeChild(group, 'ephemeral')?.attrs.expiration
 	const memberAddMode = getBinaryNodeChildString(group, 'member_add_mode') === 'all_member_add'
-	const participants: GroupParticipant[] = getBinaryNodeChildren(group, 'participant').map(({ attrs }) => {
-		const pnRaw = attrs.phone_number || attrs.jid
-		const pn = isLidUser(pnRaw) ? lidToJid(pnRaw) : pnRaw
-		const lidRaw = attrs.lid || attrs.jid
-		const lid = isLidUser(lidRaw) ? lidRaw : undefined
-		cacheLidToJid(lidRaw, pn)
-		return {
-			id: jidNormalizedUser(pn)!,
-			phoneNumber: jidNormalizedUser(pn)!,
-			lid,
-			admin: (attrs.type || null) as GroupParticipant['admin']
-		}
-	})
+		const participants: GroupParticipant[] = getBinaryNodeChildren(group, 'participant').map(({ attrs }) => {
+			// attrs.* can be string | null | undefined depending on stanza.
+			// Normalise null -> undefined to satisfy TS + keep runtime behavior stable.
+			const pnRaw = (attrs.phone_number ?? attrs.jid ?? attrs.lid) as string | undefined
+			const lidRaw = (attrs.lid ?? attrs.jid) as string | undefined
+			const pn = (isLidUser(pnRaw) ? lidToJid(pnRaw) : pnRaw) as string | undefined
+			const lid = isLidUser(lidRaw) ? lidRaw : undefined
+			cacheLidToJid(lidRaw, pn)
+
+			const id =
+				jidNormalizedUser(pn) ||
+				(lidRaw ? jidNormalizedUser(lidToJid(lidRaw)) : undefined) ||
+				jidNormalizedUser(pnRaw)
+
+			if (!id) {
+				// Extremely defensive: stanza should always contain a participant identifier.
+				// Returning a synthetic id is safer than throwing during metadata parsing.
+				return {
+					id: 'unknown@s.whatsapp.net',
+					phoneNumber: 'unknown@s.whatsapp.net',
+					lid,
+					admin: (attrs.type || null) as GroupParticipant['admin']
+				}
+			}
+
+			return {
+				id,
+				phoneNumber: id,
+				lid,
+				admin: (attrs.type || null) as GroupParticipant['admin']
+			}
+		})
 	cacheGroupParticipantMappings(participants as any)
 
 	const metadata: GroupMetadata = {
