@@ -9,6 +9,7 @@ import {
 	getBinaryNodeChildString,
 	isLidUser,
 	isPnUser,
+	cacheLidToJid,
 	jidEncode,
 	jidNormalizedUser
 } from '../WABinary'
@@ -345,11 +346,23 @@ export const extractGroupMetadata = (result: BinaryNode) => {
 		joinApprovalMode: !!getBinaryNodeChild(group, 'membership_approval_mode'),
 		memberAddMode,
 		participants: getBinaryNodeChildren(group, 'participant').map(({ attrs }) => {
-			// TODO: Store LID MAPPINGS
+			const phoneNumber = isLidUser(attrs.jid) && isPnUser(attrs.phone_number) ? attrs.phone_number : undefined
+			const lid = isPnUser(attrs.jid) && isLidUser(attrs.lid) ? attrs.lid : undefined
+
+			// Cache LID <-> PN mappings for downstream resolution (best-effort)
+			// In addressing_mode=lid groups, attrs.jid is often the LID and attrs.phone_number is the PN JID
+			if (isLidUser(attrs.jid) && phoneNumber) {
+				cacheLidToJid(attrs.jid, phoneNumber)
+			}
+			// Sometimes attrs.jid is PN and attrs.lid is LID
+			if (isPnUser(attrs.jid) && lid) {
+				cacheLidToJid(lid, attrs.jid)
+			}
+
 			return {
 				id: attrs.jid!,
-				phoneNumber: isLidUser(attrs.jid) && isPnUser(attrs.phone_number) ? attrs.phone_number : undefined,
-				lid: isPnUser(attrs.jid) && isLidUser(attrs.lid) ? attrs.lid : undefined,
+				phoneNumber,
+				lid,
 				admin: (attrs.type || null) as GroupParticipant['admin']
 			}
 		}),
