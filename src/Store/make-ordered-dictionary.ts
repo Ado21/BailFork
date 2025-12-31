@@ -78,17 +78,21 @@ export default function makeOrderedDictionary<T, Id extends string = string>(
 				delete dict[key]
 			}
 		},
-		filter: (contain: (item: T) => boolean) => {
-			let i = 0
-			while (i < array.length) {
-				if (!contain(array[i])) {
-					delete dict[idGetter(array[i])]
-					array.splice(i, 1)
-				} else {
-					i += 1
+			filter: (contain: (item: T) => boolean) => {
+				let i = 0
+				while (i < array.length) {
+					const item = array[i]
+					// With `noUncheckedIndexedAccess`, array[i] is `T | undefined`.
+					if (!item || !contain(item)) {
+						if (item) {
+							delete dict[idGetter(item)]
+						}
+						array.splice(i, 1)
+					} else {
+						i += 1
+					}
 				}
-			}
-		},
+			},
 		toJSON: () => array,
 		fromJSON: (newItems: T[]) => {
 			array.splice(0, array.length, ...newItems)
