@@ -11,7 +11,107 @@ import { ObjectRepository } from './object-repository'
 import * as KeyedDBModule from '@adiwajshing/keyed-db'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
 
-const KeyedDBCtor: any = (KeyedDBModule as any).default ?? (KeyedDBModule as any).KeyedDB ?? (KeyedDBModule as any)
+const resolveKeyedDBCtor = (mod: any) => {
+	const candidates: any[] = [
+		mod,
+		mod?.KeyedDB,
+		mod?.default,
+		mod?.default?.KeyedDB,
+		mod?.default?.default,
+		mod?.default?.default?.KeyedDB
+	]
+	for (const c of candidates) {
+		// "constructible" heuristic: functions/classes (non-arrow) have a prototype
+		if (typeof c === 'function' && c.prototype) return c
+	}
+	for (const c of candidates) {
+		if (c && typeof c === 'object') {
+			for (const k of Object.keys(c)) {
+				const v = (c as any)[k]
+				if (typeof v === 'function' && v.prototype) return v
+			}
+		}
+	}
+	return undefined
+}
+
+type KeyDef<T> = { key: (item: T) => string; compare: (k1: string, k2: string) => number }
+
+class MiniKeyedDB<T> {
+	private readonly keyDef: KeyDef<T>
+	private readonly idFn: (item: T) => string
+	private readonly map = new Map<string, T>()
+
+	constructor(keyDef: KeyDef<T>, idFn: (item: T) => string) {
+		this.keyDef = keyDef
+		this.idFn = idFn
+	}
+
+	clear() {
+		this.map.clear()
+	}
+
+	insertIfAbsent(...items: T[]) {
+		const inserted: T[] = []
+		for (const item of items || []) {
+			const id = this.idFn(item)
+			if (!this.map.has(id)) {
+				this.map.set(id, item)
+				inserted.push(item)
+			}
+		}
+		return inserted
+	}
+
+	upsert(...items: T[]) {
+		for (const item of items || []) {
+			this.map.set(this.idFn(item), item)
+		}
+	}
+
+	update(id: string, fn: (item: T) => void) {
+		const item = this.map.get(id)
+		if (!item) return undefined
+		fn(item)
+		this.map.set(id, item)
+		return item
+	}
+
+	get(id: string) {
+		return this.map.get(id)
+	}
+
+	deleteById(id: string) {
+		this.map.delete(id)
+	}
+
+	all() {
+		const arr = Array.from(this.map.values())
+		arr.sort((a, b) => this.keyDef.compare(this.keyDef.key(a), this.keyDef.key(b)))
+		return arr
+	}
+
+	toJSON() {
+		return this.all()
+	}
+
+	fromJSON(j: any) {
+		this.clear()
+		const arr = Array.isArray(j) ? j : []
+		for (const item of arr) {
+			if (!item) continue
+			this.map.set(this.idFn(item), item)
+		}
+	}
+
+	// Used by labelAssociations
+	delete(item: T) {
+		this.deleteById(this.idFn(item))
+	}
+}
+
+const ResolvedKeyedDB: any = resolveKeyedDBCtor(KeyedDBModule)
+const KeyedDBImpl: any = ResolvedKeyedDB || MiniKeyedDB
 
 export const waChatKey = (pin: boolean) => ({
 	key: (c: Chat) =>
