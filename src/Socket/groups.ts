@@ -328,14 +328,16 @@ export const extractGroupMetadata = (result: BinaryNode) => {
 				// Use a final `?? undefined` to ensure `null` does not survive the coalescing chain.
 				const pnRaw = (attrs.phone_number ?? attrs.jid ?? attrs.lid ?? undefined) as string | undefined
 				const lidRaw = (attrs.lid ?? attrs.jid ?? undefined) as string | undefined
-			const pn = (isLidUser(pnRaw) ? lidToJid(pnRaw) : pnRaw) as string | undefined
+				// lidToJid may return null in some implementations; normalise null -> undefined
+				const pn = (isLidUser(pnRaw) ? (lidToJid(pnRaw) ?? undefined) : pnRaw) as string | undefined
 			const lid = isLidUser(lidRaw) ? lidRaw : undefined
 			cacheLidToJid(lidRaw, pn)
 
-			const id =
-				jidNormalizedUser(pn) ||
-				(lidRaw ? jidNormalizedUser(lidToJid(lidRaw)) : undefined) ||
-				jidNormalizedUser(pnRaw)
+				const idFromLid = lidRaw ? (lidToJid(lidRaw) ?? undefined) : undefined
+				const id =
+					jidNormalizedUser(pn) ||
+					(idFromLid ? jidNormalizedUser(idFromLid) : undefined) ||
+					jidNormalizedUser(pnRaw)
 
 			if (!id) {
 				// Extremely defensive: stanza should always contain a participant identifier.
