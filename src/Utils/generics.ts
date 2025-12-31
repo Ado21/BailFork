@@ -44,8 +44,27 @@ export const BufferJSON = {
 	}
 }
 
-export const getKeyAuthor = (key: WAMessageKey | undefined | null, meId = 'me') =>
-	(key?.fromMe ? meId : key?.participantAlt || key?.remoteJidAlt || key?.participant || key?.remoteJid) || ''
+/**
+ * Returns the most appropriate "author" JID for a message key.
+ *
+ * On newer WhatsApp addressing, Baileys can receive LID JIDs ("@lid") alongside
+ * PN alternatives via participantAlt/remoteJidAlt. Downstream bot code almost
+ * always expects PN JIDs ("@s.whatsapp.net").
+ *
+ * This helper therefore prefers a non-LID candidate whenever available.
+ */
+export const getKeyAuthor = (key: WAMessageKey | undefined | null, meId = 'me') => {
+	const candidates = key?.fromMe
+		? [meId]
+		: [key?.participantAlt, key?.remoteJidAlt, key?.participant, key?.remoteJid].filter(Boolean)
+
+	// Prefer PN (or anything that is not LID) when possible
+	return (
+		candidates.find(j => typeof j === 'string' && !j.endsWith('@lid') && !j.endsWith('@hosted.lid')) ||
+		candidates.find(j => typeof j === 'string') ||
+		''
+	)
+}
 
 export const writeRandomPadMax16 = (msg: Uint8Array) => {
 	const pad = randomBytes(1)
