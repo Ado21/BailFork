@@ -55,7 +55,10 @@ import {
 	isJidNewsletter,
 	isJidStatusBroadcast,
 	isLidUser,
+	isAnyLidUser,
 	isPnUser,
+	cacheGroupParticipantMappings,
+	lidToJid,
 	jidDecode,
 	jidNormalizedUser,
 	S_WHATSAPP_NET
@@ -82,6 +85,7 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 		assertSessions,
 		sendNode,
 		relayMessage,
+		groupMetadata,
 		sendReceipt,
 		uploadPreKeys,
 		sendPeerDataOperationMessage,
@@ -1352,6 +1356,112 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 					// Once normalized, keep the alts empty to avoid callers accidentally using LID
 					if (msg.key.remoteJid && msg.key.remoteJid.endsWith('@s.whatsapp.net')) msg.key.remoteJidAlt = undefined
 					if (msg.key.participant && msg.key.participant.endsWith('@s.whatsapp.net')) msg.key.participantAlt = undefined
+				}
+
+				// --- Deep LID -> PN normalization for bot-facing message objects ---
+				// WhatsApp can embed *@lid* identifiers inside contextInfo (mentions, quoted participant, etc).
+				// Downstream bot code typically expects PN JIDs. We best-effort resolve using group metadata + cached mappings.
+				try {
+					const scanHasAnyLid = (obj: any): boolean => {
+						if (!obj || typeof obj !== 'object') return false
+						const ci = obj.contextInfo
+						if (ci) {
+							if (ci.participant && isAnyLidUser(ci.participant)) return true
+							const mj = ci.mentionedJid || ci.mentionedJidList
+							if (Array.isArray(mj) && mj.some((x: any) => typeof x === 'string' && isAnyLidUser(x))) return true
+						}
+						return false
+					}
+
+					const needsResolve = (() => {
+						if (msg.key.participant && isAnyLidUser(msg.key.participant)) return true
+						if (msg.key.remoteJid && isAnyLidUser(msg.key.remoteJid)) return true
+						const mm: any = msg.message || {}
+						return (
+							scanHasAnyLid(mm.extendedTextMessage) ||
+							scanHasAnyLid(mm.imageMessage) ||
+							scanHasAnyLid(mm.videoMessage) ||
+							scanHasAnyLid(mm.documentMessage) ||
+							scanHasAnyLid(mm.audioMessage) ||
+							scanHasAnyLid(mm.stickerMessage) ||
+							scanHasAnyLid(mm.buttonsResponseMessage) ||
+							scanHasAnyLid(mm.listResponseMessage) ||
+							scanHasAnyLid(mm.templateButtonReplyMessage) ||
+							scanHasAnyLid(mm.buttonsMessage) ||
+							scanHasAnyLid(mm.templateMessage) ||
+							scanHasAnyLid(mm.interactiveResponseMessage) ||
+							scanHasAnyLid(mm.viewOnceMessageV2) ||
+							scanHasAnyLid(mm.viewOnceMessageV2Extension)
+						)
+					})()
+
+					if (needsResolve && msg.key.remoteJid && isJidGroup(msg.key.remoteJid)) {
+						const meta = await groupMetadata(msg.key.remoteJid)
+						try {
+							cacheGroupParticipantMappings(meta?.participants as any)
+						} catch {
+							// ignore cache errors
+						}
+
+						const mapOne = (j: string | undefined | null) => {
+							if (!j) return j
+							if (!isAnyLidUser(j)) return j
+							const fp: any = meta?.participants?.find?.((p: any) => p?.lid === j || p?.id === j || p?.phoneNumber === j)
+							return (fp?.phoneNumber || fp?.jid || fp?.id || lidToJid(j)) as any
+						}
+
+						// normalize key JIDs
+						if (msg.key.participant && isAnyLidUser(msg.key.participant)) {
+							msg.key.participant = mapOne(msg.key.participant) || msg.key.participant
+						}
+						if (msg.key.remoteJid && isAnyLidUser(msg.key.remoteJid)) {
+							msg.key.remoteJid = mapOne(msg.key.remoteJid) || msg.key.remoteJid
+						}
+
+						const fixContextInfo = (ci: any) => {
+							if (!ci || typeof ci !== 'object') return
+							if (ci.participant && isAnyLidUser(ci.participant)) {
+								ci.participant = mapOne(ci.participant)
+							}
+							const mj = ci.mentionedJid || ci.mentionedJidList
+							if (Array.isArray(mj) && mj.length) {
+								for (let i = 0; i < mj.length; i++) mj[i] = mapOne(mj[i])
+								ci.mentionedJid = mj
+							}
+						}
+
+						const walk = (obj: any, depth = 0) => {
+							if (!obj || typeof obj !== 'object' || depth > 8) return
+							if ((obj as any).contextInfo) fixContextInfo((obj as any).contextInfo)
+							for (const k of Object.keys(obj)) {
+								const v = (obj as any)[k]
+								if (v && typeof v === 'object') walk(v, depth + 1)
+							}
+						}
+
+						if (msg.message) walk(msg.message)
+					} else if (needsResolve) {
+						// non-group: best-effort replace lids using cache only
+						const walk = (obj: any, depth = 0) => {
+							if (!obj || typeof obj !== 'object' || depth > 8) return
+							const ci = (obj as any).contextInfo
+							if (ci) {
+								if (ci.participant && isAnyLidUser(ci.participant)) ci.participant = lidToJid(ci.participant)
+								const mj = ci.mentionedJid || ci.mentionedJidList
+								if (Array.isArray(mj)) {
+									for (let i = 0; i < mj.length; i++) mj[i] = lidToJid(mj[i])
+									ci.mentionedJid = mj
+								}
+							}
+							for (const k of Object.keys(obj)) {
+								const v = (obj as any)[k]
+								if (v && typeof v === 'object') walk(v, depth + 1)
+							}
+						}
+						if (msg.message) walk(msg.message)
+					}
+				} catch {
+					// ignore normalization errors
 				}
 
 				cleanMessage(msg, authState.creds.me!.id, authState.creds.me!.lid!)
