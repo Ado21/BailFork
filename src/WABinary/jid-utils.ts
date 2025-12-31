@@ -106,6 +106,58 @@ export const isHostedPnUser = (jid: string | undefined) => jid?.endsWith('@hoste
 /** is the jid a hosted LID */
 export const isHostedLidUser = (jid: string | undefined) => jid?.endsWith('@hosted.lid')
 
+/** is the jid any LID form (lid or hosted.lid) */
+export const isAnyLidUser = (jid: string | undefined) => isLidUser(jid) || isHostedLidUser(jid)
+
+// --- LID -> phone-number JID resolution helpers (best-effort, cached) ---
+// WhatsApp sometimes delivers mentions/participants as *@lid* identifiers.
+// Those are not phone-number JIDs. We keep an in-memory map populated from
+// group metadata + device lists to translate LIDs back to PN JIDs.
+
+const __LID_JID_MAP = new Map<string, string>()
+
+const __normalizeLid = (lid: string | undefined | null) => {
+  if (!lid || typeof lid !== 'string') return ''
+  if (lid.includes('@')) return lid
+  return `${lid}@lid`
+}
+
+/** cache a single lid -> jid mapping */
+export const cacheLidToJid = (lid: string | undefined | null, jid: string | undefined | null) => {
+  const lidNorm = __normalizeLid(lid)
+  if (!lidNorm || !jid) return
+  const decoded = jidDecode(lidNorm)
+  const lidUser = decoded?.user
+  const jidNorm = jidNormalizedUser(jid)
+  if (!jidNorm) return
+  __LID_JID_MAP.set(lidNorm, jidNorm)
+  if (lidUser) __LID_JID_MAP.set(lidUser, jidNorm)
+}
+
+/** cache mappings for a group participant list */
+export const cacheGroupParticipantMappings = (participants: any[] | undefined | null) => {
+  if (!Array.isArray(participants)) return
+  for (const p of participants) {
+    if (!p) continue
+    // Official baileys participants: { id, phoneNumber?, lid? }
+    // Some forks use { id, jid, lid }
+    cacheLidToJid(p.lid || p.id, p.phoneNumber || p.jid || p.id)
+    cacheLidToJid(p.id, p.phoneNumber || p.jid || p.id)
+  }
+}
+
+/** best-effort: turn *@lid* JIDs into phone-number *@s.whatsapp.net* JIDs if cached */
+export const lidToJid = (jid: string | undefined | null) => {
+  if (!jid) return jid
+  if (!isAnyLidUser(jid)) return jid
+  const lidNorm = __normalizeLid(jid)
+  const decoded = jidDecode(lidNorm)
+  const lidUser = decoded?.user
+  const mapped = __LID_JID_MAP.get(lidNorm) || (lidUser ? __LID_JID_MAP.get(lidUser) : undefined)
+  // fallback: keep server change for compatibility, but this is still not a real PN if unmapped
+  return mapped || lidNorm.replace(/@hosted\.lid$/i, '@s.whatsapp.net').replace(/@lid$/i, '@s.whatsapp.net')
+}
+
 const botRegexp = /^1313555\d{4}$|^131655500\d{2}$/
 
 export const isJidBot = (jid: string | undefined) => jid && botRegexp.test(jid.split('@')[0]!) && jid.endsWith('@c.us')
