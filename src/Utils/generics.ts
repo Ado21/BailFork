@@ -15,7 +15,7 @@ import { type BinaryNode, getAllBinaryNodeChildren, jidDecode } from '../WABinar
 import { sha256 } from './crypto'
 
 export const BufferJSON = {
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	// eslint-disable-next-line @typescript-eslint/no-explicit-an
 	replacer: (k: any, value: any) => {
 		if (Buffer.isBuffer(value) || value instanceof Uint8Array || value?.type === 'Buffer') {
 			return { type: 'Buffer', data: Buffer.from(value?.data || value).toString('base64') }
@@ -481,7 +481,7 @@ export function bytesToCrockford(buffer: Buffer): string {
 		crockford.push(CROCKFORD_CHARACTERS.charAt((value << (5 - bitCount)) & 31))
 	}
 
-	return crockford.join('') //z
+	return crockford.join('')
 }
 
 export function encodeNewsletterMessage(message: proto.IMessage): Uint8Array {
