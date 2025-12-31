@@ -8,8 +8,10 @@ import { md5, toNumber } from '../Utils'
 import { jidDecode, jidNormalizedUser } from '../WABinary'
 import makeOrderedDictionary, { type OrderedDictionary } from './make-ordered-dictionary'
 import { ObjectRepository } from './object-repository'
-import KeyedDB from '@adiwajshing/keyed-db'
+import * as KeyedDBModule from '@adiwajshing/keyed-db'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
+
+const KeyedDBCtor: any = (KeyedDBModule as any).default ?? (KeyedDBModule as any).KeyedDB ?? (KeyedDBModule as any)
 
 export const waChatKey = (pin: boolean) => ({
 	key: (c: Chat) =>
@@ -48,7 +50,7 @@ export default function makeInMemoryStore(config: InMemoryStoreConfig = {}) {
 	const labelAssociationKey = config.labelAssociationKey || waLabelAssociationKey
 	const logger = (config.logger || DEFAULT_CONNECTION_CONFIG.logger).child({ stream: 'in-mem-store' })
 
-	const chats = new (KeyedDB as any)(chatKey, (c: Chat) => c.id) as {
+	const chats = new (KeyedDBCtor as any)(chatKey, (c: Chat) => c.id) as {
 		clear: () => void
 		insertIfAbsent: (...items: Chat[]) => Chat[]
 		upsert: (...items: Chat[]) => void
@@ -66,7 +68,7 @@ export default function makeInMemoryStore(config: InMemoryStoreConfig = {}) {
 	const presences: Record<string, any> = {}
 	const state: Record<string, any> = { connection: 'close' }
 	const labels = new ObjectRepository<Label>()
-	const labelAssociations = new (KeyedDB as any)(labelAssociationKey, labelAssociationKey.key) as {
+	const labelAssociations = new (KeyedDBCtor as any)(labelAssociationKey, labelAssociationKey.key) as {
 		upsert: (item: LabelAssociation) => void
 		delete: (item: LabelAssociation) => void
 		toJSON: () => any
