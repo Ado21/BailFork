@@ -30,6 +30,7 @@ import {
 	getWAUploadToServer,
 	MessageRetryManager,
 	normalizeMessageContent,
+	getContentType,
 	parseAndInjectE2ESessions,
 	unixTimestampSeconds
 } from '../Utils'
@@ -1008,6 +1009,36 @@ const resolvePnJid = async (jid?: string | null) => {
 					attrs: {},
 					content: tcTokenBuffer
 				})
+			}
+
+			const content = normalizeMessageContent(message)
+			const contentType = getContentType(content)
+			// Interactive/List buttons require a biz node for proper rendering on clients
+			if ((isGroup || isPnUser(jid)) && (contentType === 'interactiveMessage' || contentType === 'buttonsMessage' || contentType === 'listMessage')) {
+				const bizNode: BinaryNode = { tag: 'biz', attrs: {} }
+				const m: any = message as any
+				const hasInteractiveOrButtons = Boolean(
+					m?.viewOnceMessage?.message?.interactiveMessage ||
+					m?.viewOnceMessageV2?.message?.interactiveMessage ||
+					m?.viewOnceMessageV2Extension?.message?.interactiveMessage ||
+					m?.interactiveMessage ||
+					m?.viewOnceMessage?.message?.buttonsMessage ||
+					m?.viewOnceMessageV2?.message?.buttonsMessage ||
+					m?.viewOnceMessageV2Extension?.message?.buttonsMessage ||
+					m?.buttonsMessage
+				)
+				if (hasInteractiveOrButtons) {
+					bizNode.content = [
+						{
+							tag: 'interactive',
+							attrs: { type: 'native_flow', v: '1' },
+							content: [{ tag: 'native_flow', attrs: { v: '9', name: 'mixed' } }]
+						}
+					]
+				} else if (m?.listMessage) {
+					bizNode.content = [{ tag: 'list', attrs: { type: 'product_list', v: '2' } }]
+				}
+				;(stanza.content as BinaryNode[]).push(bizNode)
 			}
 
 			if (additionalNodes && additionalNodes.length > 0) {
