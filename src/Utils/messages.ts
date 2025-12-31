@@ -501,6 +501,84 @@ export const generateWAMessageContent = async (
 		})
 	} else if ('listReply' in message) {
 		m.listResponseMessage = { ...message.listReply }
+	} else if ((message as any)?.interactiveButtons) {
+		// NativeFlow interactive buttons ("interactiveMessage") -- convenience wrapper (ported from bly)
+		const msgAny: any = message as any
+		const interactiveMessage: any = {
+			nativeFlowMessage: WAProto.Message.InteractiveMessage.NativeFlowMessage.fromObject({
+				buttons: msgAny.interactiveButtons
+			})
+		}
+
+		if (msgAny.text) {
+			interactiveMessage.body = { text: msgAny.text }
+		} else if (msgAny.caption) {
+			interactiveMessage.body = { text: msgAny.caption }
+		}
+		if (msgAny.footer) {
+			interactiveMessage.footer = { text: msgAny.footer }
+		}
+		if (msgAny.title) {
+			interactiveMessage.header = {
+				title: msgAny.title,
+				subtitle: msgAny.subtitle,
+				hasMediaAttachment: !!msgAny.media
+			}
+		}
+		if (msgAny.contextInfo) {
+			interactiveMessage.contextInfo = msgAny.contextInfo
+		}
+		if (msgAny.mentions) {
+			interactiveMessage.contextInfo = { mentionedJid: msgAny.mentions }
+		}
+		m.interactiveMessage = WAProto.Message.InteractiveMessage.fromObject(interactiveMessage)
+	} else if ((message as any)?.buttons) {
+		// Classic buttons message (buttonsMessage)
+		const msgAny: any = message as any
+		const buttonsMessage: any = {
+			buttons: msgAny.buttons,
+			contentText: msgAny.text || msgAny.caption || '',
+			headerType: msgAny.headerType || 1
+		}
+		if (msgAny.footer) {
+			buttonsMessage.footerText = msgAny.footer
+		}
+		if (msgAny.contextInfo) {
+			buttonsMessage.contextInfo = msgAny.contextInfo
+		}
+		if (msgAny.mentions) {
+			buttonsMessage.contextInfo = { mentionedJid: msgAny.mentions }
+		}
+		m.buttonsMessage = WAProto.Message.ButtonsMessage.fromObject(buttonsMessage)
+	} else if ((message as any)?.templateButtons) {
+		// Template buttons message (templateMessage)
+		const msgAny: any = message as any
+		const tpl: any = {
+			hydratedButtons: msgAny.templateButtons
+		}
+		if (msgAny.text) {
+			tpl.hydratedContentText = msgAny.text
+		} else if (msgAny.caption) {
+			tpl.hydratedContentText = msgAny.caption
+		}
+		if (msgAny.footer) {
+			tpl.hydratedFooterText = msgAny.footer
+		}
+		m.templateMessage = {
+			fourRowTemplate: tpl,
+			hydratedTemplate: tpl
+		}
+	} else if ((message as any)?.sections) {
+		// List message (listMessage)
+		const msgAny: any = message as any
+		m.listMessage = {
+			sections: msgAny.sections,
+			buttonText: msgAny.buttonText,
+			title: msgAny.title,
+			footerText: msgAny.footer,
+			description: msgAny.text || msgAny.caption,
+			listType: proto.Message.ListMessage.ListType.SINGLE_SELECT
+		}
 	} else if ('event' in message) {
 		m.eventMessage = {}
 		const startTime = Math.floor(message.event.startDate.getTime() / 1000)
