@@ -1208,6 +1208,37 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 			}
 		}
 
+		/**
+		 * Best-effort normalization: prefer PN JIDs over LID JIDs for downstream consumers.
+		 *
+		 * WhatsApp can send both a primary jid (often @lid) and an alternate (often PN) via
+		 * participantAlt/remoteJidAlt. Bot code almost always expects PN JIDs.
+		 */
+		const preferPnJid = async (primary?: string, alt?: string) => {
+			const primaryStr = primary || ''
+			const altStr = alt || ''
+
+			// If the alternate is already a PN jid, prefer it immediately (fast path)
+			if (altStr && altStr.endsWith('@s.whatsapp.net')) {
+				return jidNormalizedUser(altStr)
+			}
+
+			// If primary is already PN, keep it
+			if (primaryStr && primaryStr.endsWith('@s.whatsapp.net')) {
+				return jidNormalizedUser(primaryStr)
+			}
+
+			// If primary is LID, attempt to resolve via LID mapping store
+			if (primaryStr && isLidUser(primaryStr)) {
+				const pn = await signalRepository.lidMapping.getPNForLID(primaryStr)
+				if (pn) {
+					return jidNormalizedUser(pn)
+				}
+			}
+
+			return primary
+		}
+
 		if (msg.key?.remoteJid && msg.key?.id && messageRetryManager) {
 			messageRetryManager.addRecentMessage(msg.key.remoteJid, msg.key.id, msg.message!)
 			logger.debug(
@@ -1312,6 +1343,15 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 						await sendMessageAck(node)
 						logger.debug({ key: msg.key }, 'processed newsletter message without receipts')
 					}
+				}
+
+				// Expose PN JIDs ("@s.whatsapp.net") to downstream consumers whenever possible
+				if (msg?.key) {
+					msg.key.remoteJid = await preferPnJid(msg.key.remoteJid, msg.key.remoteJidAlt)
+					msg.key.participant = await preferPnJid(msg.key.participant, msg.key.participantAlt)
+					// Once normalized, keep the alts empty to avoid callers accidentally using LID
+					if (msg.key.remoteJid && msg.key.remoteJid.endsWith('@s.whatsapp.net')) msg.key.remoteJidAlt = undefined
+					if (msg.key.participant && msg.key.participant.endsWith('@s.whatsapp.net')) msg.key.participantAlt = undefined
 				}
 
 				cleanMessage(msg, authState.creds.me!.id, authState.creds.me!.lid!)
