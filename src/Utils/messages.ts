@@ -819,6 +819,24 @@ export const normalizeMessageContent = (content: WAMessageContent | null | undef
 		content = inner.message
 	}
 
+	// --- Compatibility shim: Native Flow (interactive) replies -> plain text ---
+	//
+	// Many bot frameworks (especially legacy ones) treat list/button selections
+	// as normal text messages by reading `conversation` or `extendedTextMessage.text`.
+	// WhatsApp's newer Native Flow UI returns selections as `interactiveResponseMessage`
+	// with a JSON payload in `nativeFlowResponseMessage.paramsJson`.
+	//
+	// BLY-style wrappers often translate these into a command string automatically.
+	// To keep compatibility at the Baileys layer (so downstream code does not
+	// need to special-case every interactive type), we best-effort extract an
+	// actionable `id` (or similar) from the params JSON and expose it as text.
+	//
+	// This is designed to be:
+	// - safe: never throws
+	// - non-destructive: we do not remove the original interactive payload
+	// - minimal overhead: only runs when `interactiveResponseMessage` exists
+	content = patchInteractiveResponsesToText(content)
+
 	return content!
 
 	function getFutureProofMessage(message: typeof content) {
@@ -831,6 +849,131 @@ export const normalizeMessageContent = (content: WAMessageContent | null | undef
 			message?.editedMessage
 		)
 	}
+}
+
+/**
+ * Best-effort converts Native Flow (interactive) responses to plain text.
+ *
+ * - Quick replies typically return `{ id: "..." }`.
+ * - Single-select lists typically return `{ id: "...", title: "..." }`.
+ * - Some clients wrap nested JSON strings (e.g. `{ paramsJson: "{...}" }`).
+ */
+const patchInteractiveResponsesToText = (content: WAMessageContent): WAMessageContent => {
+	try {
+		const any: any = content as any
+		let extracted: string | undefined
+
+		// 1) Native Flow (new interactive UI)
+		const ir = any?.interactiveResponseMessage
+		const nfr = ir?.nativeFlowResponseMessage
+		const paramsJson: unknown = nfr?.paramsJson
+		if (!extracted && nfr && typeof paramsJson === 'string' && paramsJson.trim()) {
+			extracted = extractActionIdFromNativeFlow(paramsJson)
+		}
+
+		// 2) Classic buttons
+		const br = any?.buttonsResponseMessage
+		if (!extracted && br) {
+			extracted =
+				(typeof br.selectedButtonId === 'string' && br.selectedButtonId.trim() ? br.selectedButtonId : undefined) ||
+				(typeof br.selectedDisplayText === 'string' && br.selectedDisplayText.trim() ? br.selectedDisplayText : undefined)
+		}
+
+		// 3) Classic lists
+		const lr = any?.listResponseMessage
+		if (!extracted && lr) {
+			extracted =
+				(typeof lr?.singleSelectReply?.selectedRowId === 'string' && lr.singleSelectReply.selectedRowId.trim()
+					? lr.singleSelectReply.selectedRowId
+					: undefined) ||
+				(typeof lr?.selectedRowId === 'string' && lr.selectedRowId.trim() ? lr.selectedRowId : undefined)
+		}
+
+		// 4) Template button replies
+		const tr = any?.templateButtonReplyMessage
+		if (!extracted && tr) {
+			extracted =
+				(typeof tr.selectedId === 'string' && tr.selectedId.trim() ? tr.selectedId : undefined) ||
+				(typeof tr.selectedDisplayText === 'string' && tr.selectedDisplayText.trim() ? tr.selectedDisplayText : undefined)
+		}
+
+		if (!extracted) return content
+
+		// expose as text in the most widely-consumed fields
+		const next: any = { ...(content as any) }
+		// prefer not overwriting a real conversation/extendedText if already present
+		if (!next.conversation) next.conversation = extracted
+		if (!next.extendedTextMessage?.text) {
+			next.extendedTextMessage = {
+				...(next.extendedTextMessage || {}),
+				text: extracted
+			}
+		}
+		return next as WAMessageContent
+	} catch {
+		return content
+	}
+}
+
+const extractActionIdFromNativeFlow = (paramsJson: string): string | undefined => {
+	const safeParse = (s: string): any => {
+		try {
+			return JSON.parse(s)
+		} catch {
+			return undefined
+		}
+	}
+
+	const obj = safeParse(paramsJson)
+	if (!obj) {
+		return undefined
+	}
+
+	// Common direct keys
+	const direct =
+		pickFirstString(obj, ['id', 'selectedId', 'selectionId', 'rowId', 'row_id', 'cmd', 'command']) ||
+		pickFirstString(obj?.button_reply, ['id', 'payload']) ||
+		pickFirstString(obj?.list_reply, ['id'])
+	if (direct) return direct
+
+	// Sometimes nested JSON is stored as a string under paramsJson or similar.
+	const nestedStr = pickFirstString(obj, ['paramsJson', 'params_json', 'params'])
+	if (nestedStr) {
+		const nested = safeParse(nestedStr)
+		if (nested) {
+			const nestedDirect =
+				pickFirstString(nested, ['id', 'selectedId', 'selectionId', 'rowId', 'row_id', 'cmd', 'command']) ||
+				pickFirstString(nested?.button_reply, ['id', 'payload']) ||
+				pickFirstString(nested?.list_reply, ['id'])
+			if (nestedDirect) return nestedDirect
+		}
+	}
+
+	// Deep scan: find first plausible string value under known keys.
+	const deep = deepFindString(obj, new Set(['id', 'selectedId', 'selectionId', 'rowId', 'row_id', 'cmd', 'command']))
+	return deep
+}
+
+const pickFirstString = (obj: any, keys: string[]): string | undefined => {
+	if (!obj || typeof obj !== 'object') return undefined
+	for (const k of keys) {
+		const v = obj[k]
+		if (typeof v === 'string' && v.trim()) return v
+	}
+	return undefined
+}
+
+const deepFindString = (obj: any, keys: Set<string>, depth = 0): string | undefined => {
+	if (!obj || depth > 10) return undefined
+	if (typeof obj !== 'object') return undefined
+	for (const [k, v] of Object.entries(obj)) {
+		if (keys.has(k) && typeof v === 'string' && v.trim()) return v
+		if (typeof v === 'object' && v) {
+			const found = deepFindString(v, keys, depth + 1)
+			if (found) return found
+		}
+	}
+	return undefined
 }
 
 /**
