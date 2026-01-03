@@ -858,7 +858,10 @@ export const normalizeMessageContent = (content: WAMessageContent | null | undef
  * - Single-select lists typically return `{ id: "...", title: "..." }`.
  * - Some clients wrap nested JSON strings (e.g. `{ paramsJson: "{...}" }`).
  */
-const patchInteractiveResponsesToText = (content: WAMessageContent): WAMessageContent => {
+const patchInteractiveResponsesToText = (
+	content: WAMessageContent | null | undefined
+): WAMessageContent | null | undefined => {
+	if (!content) return content
 	try {
 		const any: any = content as any
 		let extracted: string | undefined
